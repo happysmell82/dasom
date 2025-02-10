@@ -3,8 +3,6 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class TeacherScheduleScreen extends StatefulWidget {
-  const TeacherScheduleScreen({super.key});
-
   @override
   _TeacherScheduleScreenState createState() => _TeacherScheduleScreenState();
 }
@@ -47,7 +45,7 @@ class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
   // 선생님을 선택했을 때 해당 선생님의 시간표를 불러오는 함수
   Future<void> _loadSchedule(String teacher, String yearMonth) async {
     var response = await http.get(
-      Uri.parse('http://101.101.160.223:5000/schedules?teacher=$teacher&year_month=$yearMonth'),
+      Uri.parse('http://101.101.160.223:5000/teacher_schedules?teacher=$teacher&year_month=$yearMonth'),
     );
 
     if (response.statusCode == 200) {
@@ -161,7 +159,7 @@ class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
     }
 
     var response = await http.post(
-      Uri.parse('http://101.101.160.223:5000/schedules'),
+      Uri.parse('http://101.101.160.223:5000/teacher_schedules'),
       headers: {"Content-Type": "application/json"},
       body: json.encode({
         'teacher': selectedTeacher,

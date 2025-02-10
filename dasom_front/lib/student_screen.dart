@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:multi_select_flutter/multi_select_flutter.dart';  // 다중 선택을 위한 패키지
 
 class StudentScheduleScreen extends StatefulWidget {
   const StudentScheduleScreen({super.key});
@@ -12,12 +13,14 @@ class StudentScheduleScreen extends StatefulWidget {
 class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
   String? selectedYear;
   String? selectedMonth;
-  List<String> selectedStudents = []; // 다중 선택된 선생님 목록
+  String? selectedStudent;
 
   List<String> years = ['2025', '2026', '2027'];
   List<String> months = ['01', '02', '03', '04'];
-  List<String> students = []; // 서버에서 가져오는 선생님 목록
-  Map<String, Map<String, List<String>>> schedules = {}; // 선생님별 시간표 (년-월 -> {요일: 시간대})
+  List<String> students = []; // 서버에서 가져오는 학생 목록
+  List<String> teachers = []; // 서버에서 가져오는 선생님 목록
+  List<String> selectedTeachers = []; // 선택된 선생님들
+  Map<String, Map<String, List<String>>> schedules = {}; // 학생별 시간표 (년-월 -> {요일: 시간대})
 
   List<List<Map<String, dynamic>?>> schedule = List.generate(7, (index) => List.generate(14, (index) => null));
 
@@ -27,37 +30,56 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     DateTime now = DateTime.now();
     selectedYear = now.year.toString();
     selectedMonth = now.month.toString().padLeft(2, '0'); // 01, 02 형태 유지
-    _loadStudents(); // 화면이 열리면 선생님 목록을 불러옴
+    _loadStudents(); // 화면이 열리면 학생 목록을 불러옴
+    _loadTeachers(); // 선생님 목록을 불러옴
   }
 
-  // 선생님 목록을 서버에서 불러오는 함수
+  // 학생 목록을 서버에서 불러오는 함수
   Future<void> _loadStudents() async {
     var response = await http.get(Uri.parse('http://101.101.160.223:5000/students'));
 
     if (response.statusCode == 200) {
       setState(() {
         var data = json.decode(response.body);
-        students = List<String>.from(data.map((student) => student['name'])); // 서버에서 받은 선생님 목록을 리스트로 저장
+        students = List<String>.from(data.map((student) => student['name'])); // 서버에서 받은 학생 목록을 리스트로 저장
       });
     } else {
       print('Failed to load students');
     }
   }
 
-  // 선생님을 선택했을 때 해당 선생님의 시간표를 불러오는 함수
-  Future<void> _loadSchedule(List<String> students, String yearMonth) async {
-    var response = await http.get(
-      Uri.parse('http://101.101.160.223:5000/schedules?students=${students.join(',')}&year_month=$yearMonth'),
-    );
+  // 선생님 목록을 서버에서 불러오는 함수
+  Future<void> _loadTeachers() async {
+    var response = await http.get(Uri.parse('http://101.101.160.223:5000/teachers'));
 
     if (response.statusCode == 200) {
       setState(() {
         var data = json.decode(response.body);
+        teachers = List<String>.from(data.map((teacher) => teacher['name'])); // 서버에서 받은 선생님 목록을 리스트로 저장
+      });
+    } else {
+      print('Failed to load teachers');
+    }
+  }
 
-        // `schedule` 리스트 초기화
+  // 학생을 선택했을 때 해당 학생의 시간표를 불러오는 함수
+  Future<void> _loadSchedule(String student, String yearMonth) async {
+    var response = await http.get(
+      Uri.parse('http://101.101.160.223:5000/student_schedules?student=$student&year_month=$yearMonth'),
+    );
+
+    if (response.statusCode == 200) {
+      setState(() {
+        var dataTeacher = json.decode(response.body)["teachers"];
+        
+        selectedTeachers = dataTeacher != null ? List<String>.from(dataTeacher) : [];
+        
+        var dataSchedule = json.decode(response.body)["schedule"];
+
+        // schedule 리스트 초기화
         schedule = List.generate(7, (index) => List.generate(14, (index) => null));
-
-        for (var entry in data) {
+        
+        for (var entry in dataSchedule) {
           String day = entry['day'];  // 요일 ('일', '월' ...)
           String time = entry['time']; // "8:00" 형태의 문자열
 
@@ -68,7 +90,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
             schedule[dayIndex][timeIndex] = {
               'year': selectedYear,
               'month': selectedMonth,
-              'students': selectedStudents,
+              'student': selectedStudent,
               'day': day,
               'time': time,
             };
@@ -80,7 +102,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     }
   }
 
-  // 선생님 등록 다이얼로그
+  // 학생 등록 다이얼로그
   void _showStudentDialog(BuildContext context) {
     TextEditingController studentController = TextEditingController();
 
@@ -88,10 +110,10 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('선생님 등록'),
+          title: Text('학생 등록'),
           content: TextField(
             controller: studentController,
-            decoration: InputDecoration(labelText: '선생님 이름'),
+            decoration: InputDecoration(labelText: '학생 이름'),
           ),
           actions: <Widget>[
             TextButton(
@@ -103,7 +125,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
             TextButton(
               child: Text('등록'),
               onPressed: () {
-                _addStudent(studentController.text); // 선생님 등록 요청
+                _addStudent(studentController.text); // 학생 등록 요청
                 Navigator.of(context).pop();
               },
             ),
@@ -113,7 +135,60 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     );
   }
 
-  // 선생님을 등록하는 함수
+  // 선생님을 다중 선택할 수 있는 다이얼로그
+  void _showTeacherDialog(BuildContext context) {
+    List<String> tempSelectedTeachers = List.from(selectedTeachers);  // 다이얼로그에서만 사용할 임시 리스트
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('선생님 선택'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 여러 선생님을 체크할 수 있도록 체크박스 리스트
+              ...teachers.map((teacher) {
+                return StatefulBuilder(  // 다이얼로그 내에서 상태를 직접적으로 관리하도록 StatefulBuilder 사용
+                  builder: (context, setState) {
+                    return CheckboxListTile(
+                      title: Text(teacher),
+                      value: tempSelectedTeachers.contains(teacher), // 임시 리스트로 체크 상태 관리
+                      onChanged: (bool? value) {
+                        setState(() {
+                          if (value == true) {
+                            tempSelectedTeachers.add(teacher);  // 선택된 선생님 추가
+                          } else {
+                            tempSelectedTeachers.remove(teacher);  // 선택 해제된 선생님 제거
+                          }
+                          
+                          selectedTeachers = List.from(tempSelectedTeachers);  // 최종 선택된 선생님 리스트 반영
+
+                          Future.delayed(Duration(milliseconds: 300), _saveSchedule);
+                        });
+                      },
+                    );
+                  });  
+                }).toList(),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('닫기'),
+              onPressed: () {
+                setState(() {
+                  selectedTeachers = List.from(tempSelectedTeachers);  // 최종 선택된 선생님 리스트 반영
+                });
+                Navigator.of(context).pop();  // 다이얼로그 닫기
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // 학생을 등록하는 함수
   Future<void> _addStudent(String studentName) async {
     if (studentName.isEmpty) return;
 
@@ -124,7 +199,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     );
 
     if (response.statusCode == 201) {
-      // 등록 성공 시 선생님 목록을 다시 불러옵니다.
+      // 등록 성공 시 학생 목록을 다시 불러옵니다.
       _loadStudents();
     } else {
       print('Failed to add student');
@@ -137,7 +212,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
         schedule[day][time] = {
           'year': selectedYear,
           'month': selectedMonth,
-          'students': selectedStudents,
+          'student': selectedStudent,
           'day': ['일', '월', '화', '수', '목', '금', '토'][day],
           'time': '${8 + time}:00', // 1시간 단위 시간 처리
         };
@@ -161,10 +236,11 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     }
 
     var response = await http.post(
-      Uri.parse('http://101.101.160.223:5000/schedules'),
+      Uri.parse('http://101.101.160.223:5000/student_schedules'),
       headers: {"Content-Type": "application/json"},
       body: json.encode({
-        'students': selectedStudents,
+        'student': selectedStudent,
+        'teachers': selectedTeachers,  // 선택된 선생님들 추가
         'year_month': '$selectedYear-$selectedMonth',
         'schedule': scheduleData,
       }),
@@ -195,8 +271,8 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                   onChanged: (value) {
                     setState(() {
                       selectedYear = value;
-                      if (selectedYear != null && selectedMonth != null && selectedStudents.isNotEmpty) {
-                        _loadSchedule(selectedStudents, '$selectedYear-$selectedMonth');
+                      if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
+                        _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
                       }
                     });
                   },
@@ -214,8 +290,8 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                   onChanged: (value) {
                     setState(() {
                       selectedMonth = value;
-                      if (selectedYear != null && selectedMonth != null && selectedStudents.isNotEmpty) {
-                        _loadSchedule(selectedStudents, '$selectedYear-$selectedMonth');
+                      if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
+                        _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
                       }
                     });
                   },
@@ -227,33 +303,31 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                   }).toList(),
                 ),
                 SizedBox(width: 10),
-                // 다중 선생님 선택을 위한 체크박스 목록
-                Expanded(
-                  child: Column(
-                    children: students.map((student) {
-                      return CheckboxListTile(
-                        title: Text(student),
-                        value: selectedStudents.contains(student),
-                        onChanged: (bool? value) {
-                          setState(() {
-                            if (value != null && value) {
-                              selectedStudents.add(student);
-                            } else {
-                              selectedStudents.remove(student);
-                            }
-
-                            if (selectedYear != null && selectedMonth != null && selectedStudents.isNotEmpty) {
-                              _loadSchedule(selectedStudents, '$selectedYear-$selectedMonth');
-                            }
-                          });
-                        },
-                      );
-                    }).toList(),
-                  ),
+                DropdownButton<String>(
+                  value: selectedStudent,
+                  hint: Text('학생 선택'),
+                  onChanged: (value) {
+                    setState(() {
+                      selectedStudent = value;
+                      if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
+                        _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
+                      }
+                    });
+                  },
+                  items: students.map((student) {
+                    return DropdownMenuItem<String>(
+                      value: student,
+                      child: Text(student),
+                    );
+                  }).toList(),
                 ),
                 IconButton(
                   icon: Icon(Icons.add),
                   onPressed: () => _showStudentDialog(context),
+                ),
+                IconButton(
+                  icon: Icon(Icons.person_add),
+                  onPressed: () => _showTeacherDialog(context), // 선생님 선택 버튼
                 ),
               ],
             ),
@@ -288,8 +362,8 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                     );
                   }
 
-                  // 년월, 선생님 선택이 되어 있지 않으면 클릭 불가
-                  if (selectedYear == null || selectedMonth == null || selectedStudents.isEmpty) {
+                  // 년월, 학생 선택이 되어 있지 않으면 클릭 불가
+                  if (selectedYear == null || selectedMonth == null || selectedStudent == null) {
                     return GestureDetector(
                       onTap: null,  // 클릭 비활성화
                       child: Container(
@@ -304,15 +378,13 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                   // 시간표 색칠 기능 (선택된 시간은 색상이 변함)
                   var currentSchedule = schedule[day][time];
                   return GestureDetector(
-                    onTap: () {
-                      _toggleCell(day, time);
-                    },
+                    onTap: () => _toggleCell(day, time),
                     child: Container(
                       decoration: BoxDecoration(
                         border: Border.all(color: Colors.black),
-                        color: currentSchedule == null ? Colors.white : Colors.green[200],
-                      ),
-                    )
+                        color: currentSchedule != null ? Colors.blue[200] : Colors.white,
+                      )
+                    ),
                   );
                 },
               ),
