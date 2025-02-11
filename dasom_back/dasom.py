@@ -216,65 +216,170 @@ def generate_schedule():
             schedule_ref = db.collection('teacher_schedules').document(teacher.id).collection(year_month)
             schedules = schedule_ref.stream()
             teacher_schedules[teacher.id] = [s.to_dict() for s in schedules]
-            
+
         # 2. 모든 학생의 가능 시간과 선호 선생님 가져오기
         students_ref = db.collection('students')
         students = students_ref.stream()
+
+        print(teacher_schedules)
         
         student_schedules = {}
         for student in students:
             schedule_ref = db.collection('student_schedules').document(student.id).collection('year_month').document(year_month)
             schedule_doc = schedule_ref.get()
             if schedule_doc.exists:
-                schedule_data = schedule_doc.to_dict()
+                schedule_data = schedule_doc.to_dict() or {}
+
+                sub_collections = schedule_ref.collections()
+                
+                for sub_col in sub_collections:
+                    sub_docs = sub_col.stream()
+                    schedule_data[sub_col.id] = [doc.to_dict() for doc in sub_docs]  # 컬렉션 데이터를 리스트로 변환
+                
                 student_schedules[student.id] = {
                     'teachers': schedule_data.get('teachers', []),
-                    'schedule': schedule_data.get('schedule', [])
+                    'schedule': schedule_data
                 }
-                
+
+        print("////////////////////////////////////////////////////////////////")  
+        
         # 3. 매칭 생성
         matched_schedules = []
-        used_slots = set()  # 이미 할당된 시간슬롯을 추적
-        
-        for student, student_data in student_schedules.items():
+        used_slots = set()  # (day, time) 튜플로 이미 사용된 시간 추적
+
+        print("Student Schedules:", student_schedules)  # 디버깅용 출력
+
+        # 각 학생에 대해
+        for student_id, student_data in student_schedules.items():
             preferred_teachers = student_data['teachers']
-            student_times = {(s['day'], s['time']) for s in student_data['schedule']}
+            student_schedule = student_data['schedule'].get('schedule', [])  # schedule 키에서 schedule 리스트 가져오기
             
-            for teacher in preferred_teachers:
-                if teacher not in teacher_schedules:
+            # 학생의 가능한 시간 집합 생성
+            student_available_times = set()
+            for schedule_item in student_schedule:
+                day = schedule_item.get('day')
+                time = schedule_item.get('time')
+                if day and time:
+                    student_available_times.add((day, time))
+
+            print(f"Student {student_id} available times:", student_available_times)  # 디버깅용 출력
+
+            # 선호하는 선생님들에 대해
+            for teacher_id in preferred_teachers:
+                if teacher_id not in teacher_schedules:
                     continue
-                    
-                teacher_times = {(s['day'], s['time']) for s in teacher_schedules[teacher]}
+
+                teacher_schedule = teacher_schedules[teacher_id]
                 
-                # 가능한 시간 찾기
-                available_times = student_times.intersection(teacher_times)
+                # 선생님의 가능한 시간 집합 생성
+                teacher_available_times = {(s.get('day'), s.get('time')) 
+                                        for s in teacher_schedule 
+                                        if s.get('day') and s.get('time')}
+
+                print(f"Teacher {teacher_id} available times:", teacher_available_times)  # 디버깅용 출력
+                
+                # 학생과 선생님의 가능한 시간 중 겹치는 시간 찾기
+                common_times = student_available_times.intersection(teacher_available_times)
                 
                 # 이미 사용된 시간 제외
-                available_times = available_times - used_slots
-                
+                available_times = common_times - used_slots
+
                 if available_times:
-                    # 첫 번째 가능한 시간 선택
+                    # 가능한 시간 중 하나 선택
                     matched_time = available_times.pop()
                     used_slots.add(matched_time)
-                    
+
+                    # 매칭 스케줄에 추가
                     matched_schedules.append({
-                        'teacher': teacher,
-                        'student': student,
+                        'teacher': teacher_id,
+                        'student': student_id,
                         'day': matched_time[0],
-                        'time': matched_time[1],
-                        'year_month': year_month
+                        'time': matched_time[1]
                     })
-                    
-                    # 매칭된 스케줄 저장
-                    schedule_ref = db.collection('matched_schedules').document(year_month)
-                    schedule_ref.set({
-                        'schedules': matched_schedules
-                    }, merge=True)
-        
+
+                    print(f"Matched: Teacher {teacher_id} with Student {student_id} at {matched_time}")  # 디버깅용 출력
+                    break  # 한 학생당 한 선생님과만 매칭
+
+        # 4. 생성된 스케줄 저장
+        if matched_schedules:
+            # 선생님별로 스케줄 그룹화
+            teacher_grouped_schedules = {}
+            for schedule in matched_schedules:
+                teacher_id = schedule['teacher']
+                if teacher_id not in teacher_grouped_schedules:
+                    teacher_grouped_schedules[teacher_id] = []
+                teacher_grouped_schedules[teacher_id].append({
+                    'student': schedule['student'],
+                    'day': schedule['day'],
+                    'time': schedule['time']
+                })
+
+            # 년월 문서 아래에 선생님별로 저장
+            matched_ref = db.collection('matched_schedules').document(year_month)
+            
+            for teacher_id, schedules in teacher_grouped_schedules.items():
+                teacher_ref = matched_ref.collection(teacher_id)
+                
+                # 각 학생별로 문서 생성
+                for schedule in schedules:
+                    student_ref = teacher_ref.document(schedule['student'])
+                    student_ref.set({
+                        'day': schedule['day'],
+                        'time': schedule['time']
+                    })
+
+        print("////////////////////////////////////////////////////////////////")  
+        print(matched_schedules)    
+
         return jsonify(matched_schedules)
         
     except Exception as e:
         return jsonify({"message": f"오류가 발생했습니다: {str(e)}"}), 500
+
+@app.route('/matched_schedules', methods=['GET'])
+def get_matched_schedules():
+    teacher_name = request.args.get('teacher')
+    year_month = request.args.get('year_month')
+
+    if not teacher_name or not year_month:
+        return jsonify({"message": "선생님과 년월을 입력해 주세요."}), 400
+
+    try:
+        # 먼저 선생님 ID 찾기
+        teachers_ref = db.collection('teachers')
+        teacher_query = teachers_ref.where('name', '==', teacher_name).limit(1).stream()
+        teacher_id = None
+        
+        for teacher in teacher_query:
+            teacher_id = teacher.id
+            break
+            
+        if not teacher_id:
+            return jsonify({"message": "선생님을 찾을 수 없습니다."}), 404
+
+        # matched_schedules/{year_month}/{teacher_id} 경로에서 데이터 조회
+        teacher_ref = db.collection('matched_schedules').document(year_month).collection(teacher_id)
+        schedules = []
+        
+        # 해당 선생님의 모든 학생 스케줄 조회
+        for student_doc in teacher_ref.stream():
+            schedule_data = student_doc.to_dict()
+            
+            # 학생 이름 가져오기
+            student_ref = db.collection('students').document(student_doc.id).get()
+            student_name = student_ref.get('name') if student_ref.exists else student_doc.id
+            
+            schedules.append({
+                'student': student_name,  # 학생 ID 대신 이름 사용
+                'day': schedule_data.get('day'),
+                'time': schedule_data.get('time')
+            })
+
+        return jsonify(schedules)
+
+    except Exception as e:
+        print(f"Error fetching schedules: {str(e)}")
+        return jsonify({"message": f"스케줄 조회 중 오류가 발생했습니다: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
