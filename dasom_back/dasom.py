@@ -162,7 +162,7 @@ def get_student_schedule():
     for sub_col in sub_collections:
         sub_docs = sub_col.stream()
         schedule_data[sub_col.id] = [doc.to_dict() for doc in sub_docs]  # 컬렉션 데이터를 리스트로 변환
-        
+
     return Response(json.dumps(schedule_data, ensure_ascii=False), mimetype='application/json; charset=utf-8')
 
 # 학생의 시간표 저장 API
@@ -197,6 +197,84 @@ def save_student_schedule():
         schedule_ref.collection("schedule").document(f"{day}_{time}").set(entry)
         
     return jsonify({"message": "시간표가 저장되었습니다."}), 200
+
+@app.route('/generate_schedule', methods=['POST'])
+def generate_schedule():
+    data = request.get_json()
+    year_month = data.get('year_month')
+    
+    if not year_month:
+        return jsonify({"message": "년월을 입력해 주세요."}), 400
+        
+    try:
+        # 1. 모든 선생님의 가능 시간 가져오기
+        teachers_ref = db.collection('teachers')
+        teachers = teachers_ref.stream()
+        
+        teacher_schedules = {}
+        for teacher in teachers:
+            schedule_ref = db.collection('teacher_schedules').document(teacher.id).collection(year_month)
+            schedules = schedule_ref.stream()
+            teacher_schedules[teacher.id] = [s.to_dict() for s in schedules]
+            
+        # 2. 모든 학생의 가능 시간과 선호 선생님 가져오기
+        students_ref = db.collection('students')
+        students = students_ref.stream()
+        
+        student_schedules = {}
+        for student in students:
+            schedule_ref = db.collection('student_schedules').document(student.id).collection('year_month').document(year_month)
+            schedule_doc = schedule_ref.get()
+            if schedule_doc.exists:
+                schedule_data = schedule_doc.to_dict()
+                student_schedules[student.id] = {
+                    'teachers': schedule_data.get('teachers', []),
+                    'schedule': schedule_data.get('schedule', [])
+                }
+                
+        # 3. 매칭 생성
+        matched_schedules = []
+        used_slots = set()  # 이미 할당된 시간슬롯을 추적
+        
+        for student, student_data in student_schedules.items():
+            preferred_teachers = student_data['teachers']
+            student_times = {(s['day'], s['time']) for s in student_data['schedule']}
+            
+            for teacher in preferred_teachers:
+                if teacher not in teacher_schedules:
+                    continue
+                    
+                teacher_times = {(s['day'], s['time']) for s in teacher_schedules[teacher]}
+                
+                # 가능한 시간 찾기
+                available_times = student_times.intersection(teacher_times)
+                
+                # 이미 사용된 시간 제외
+                available_times = available_times - used_slots
+                
+                if available_times:
+                    # 첫 번째 가능한 시간 선택
+                    matched_time = available_times.pop()
+                    used_slots.add(matched_time)
+                    
+                    matched_schedules.append({
+                        'teacher': teacher,
+                        'student': student,
+                        'day': matched_time[0],
+                        'time': matched_time[1],
+                        'year_month': year_month
+                    })
+                    
+                    # 매칭된 스케줄 저장
+                    schedule_ref = db.collection('matched_schedules').document(year_month)
+                    schedule_ref.set({
+                        'schedules': matched_schedules
+                    }, merge=True)
+        
+        return jsonify(matched_schedules)
+        
+    except Exception as e:
+        return jsonify({"message": f"오류가 발생했습니다: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

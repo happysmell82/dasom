@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class TeacherScheduleScreen extends StatefulWidget {
+  const TeacherScheduleScreen({super.key});
+
   @override
   _TeacherScheduleScreenState createState() => _TeacherScheduleScreenState();
 }

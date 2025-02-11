@@ -169,7 +169,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                       },
                     );
                   });  
-                }).toList(),
+                }),
             ],
           ),
           actions: <Widget>[
