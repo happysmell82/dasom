@@ -79,10 +79,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-       
+        //print(data);
         setState(() {
           _events = _groupSchedulesByDate(List<Map<String, dynamic>>.from(data));
-          print(_events);
         });
       }
     } catch (e) {
@@ -99,19 +98,40 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Map<DateTime, List<Map<String, dynamic>>> _groupSchedulesByDate(List<Map<String, dynamic>> schedules) {
     Map<DateTime, List<Map<String, dynamic>>> grouped = {};
     
-    // 현재 선택된 년월의 첫날과 마지막 날 계산
-    DateTime firstDay = DateTime(int.parse(selectedYear!), int.parse(selectedMonth!));
-    DateTime lastDay = DateTime(int.parse(selectedYear!), int.parse(selectedMonth!) + 1, 0);
+    // 현재 선택된 년월의 첫날과 마지막 날 계산 (UTC로 생성)
+    DateTime firstDay = DateTime.utc(int.parse(selectedYear!), int.parse(selectedMonth!));
+    DateTime lastDay = DateTime.utc(int.parse(selectedYear!), int.parse(selectedMonth!) + 1, 0);
     
-    // 해당 월의 모든 날짜에 대해
+    // 요일 매핑
+    Map<String, int> dayMapping = {
+      '월': DateTime.monday,
+      '화': DateTime.tuesday,
+      '수': DateTime.wednesday,
+      '목': DateTime.thursday,
+      '금': DateTime.friday,
+      '토': DateTime.saturday,
+      '일': DateTime.sunday,
+    };
+    
+    // 해당 월의 모든 날짜에 대해 (UTC 날짜 사용)
     for (DateTime date = firstDay; date.isBefore(lastDay.add(Duration(days: 1))); date = date.add(Duration(days: 1))) {
-      String dayName = _getDayName(date.weekday);
+      // UTC 날짜로 변환
+      final utcDate = DateTime.utc(date.year, date.month, date.day);
+      
+      // 해당 날짜의 요일 가져오기
+      String dayName = _getDayName(utcDate.weekday);
       
       // 해당 요일의 스케줄 찾기
-      var daySchedules = schedules.where((schedule) => schedule['day'] == dayName).toList();
+      var daySchedules = schedules.where((schedule) {
+        String scheduleDay = schedule['day'];
+        return dayName == scheduleDay;
+      }).toList();
       
       if (daySchedules.isNotEmpty) {
-        grouped[date] = daySchedules;
+        grouped[utcDate] = daySchedules.map((schedule) => {
+          'student': schedule['student'],
+          'time': schedule['time']
+        }).toList();
       }
     }
     
@@ -306,6 +326,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   eventLoader: (day) => _events[day] ?? [],
                   calendarBuilders: CalendarBuilders(
                     defaultBuilder: (context, date, _) {
+                      print(date);
                       return _buildDayCell(date, _events[date] ?? []);
                     },
                     selectedBuilder: (context, date, _) {
