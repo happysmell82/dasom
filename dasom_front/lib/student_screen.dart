@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:multi_select_flutter/multi_select_flutter.dart';  // 다중 선택을 위한 패키지
+import 'package:flutter/rendering.dart';
 
 class StudentScheduleScreen extends StatefulWidget {
   const StudentScheduleScreen({super.key});
@@ -10,15 +11,15 @@ class StudentScheduleScreen extends StatefulWidget {
   _StudentScheduleScreenState createState() => _StudentScheduleScreenState();
 }
 
-class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
+class _StudentScheduleScreenState extends State<StudentScheduleScreen> with AutomaticKeepAliveClientMixin {
   String? selectedYear;
   String? selectedMonth;
   String? selectedStudent;
 
   List<String> years = ['2025', '2026', '2027'];
   List<String> months = ['01', '02', '03', '04'];
-  List<String> students = []; // 서버에서 가져오는 학생 목록
-  List<String> teachers = []; // 서버에서 가져오는 선생님 목록
+  List<Map<String, dynamic>> students = []; // 서버에서 가져오는 학생 목록
+  List<Map<String, dynamic>> teachers = []; // 서버에서 가져오는 선생님 목록
   List<String> selectedTeachers = []; // 선택된 선생님들
   Map<String, Map<String, List<String>>> schedules = {}; // 학생별 시간표 (년-월 -> {요일: 시간대})
 
@@ -41,7 +42,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     if (response.statusCode == 200) {
       setState(() {
         var data = json.decode(response.body);
-        students = List<String>.from(data.map((student) => student['name'])); // 서버에서 받은 학생 목록을 리스트로 저장
+        students = List<Map<String, dynamic>>.from(data); // 서버에서 받은 학생 목록을 리스트로 저장
       });
     } else {
       print('Failed to load students');
@@ -55,7 +56,7 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     if (response.statusCode == 200) {
       setState(() {
         var data = json.decode(response.body);
-        teachers = List<String>.from(data.map((teacher) => teacher['name'])); // 서버에서 받은 선생님 목록을 리스트로 저장
+        teachers = List<Map<String,dynamic>>.from(data); // 서버에서 받은 선생님 목록을 리스트로 저장
       });
     } else {
       print('Failed to load teachers');
@@ -152,14 +153,14 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
                 return StatefulBuilder(  // 다이얼로그 내에서 상태를 직접적으로 관리하도록 StatefulBuilder 사용
                   builder: (context, setState) {
                     return CheckboxListTile(
-                      title: Text(teacher),
-                      value: tempSelectedTeachers.contains(teacher), // 임시 리스트로 체크 상태 관리
+                      title: Text(teacher['name']),
+                      value: tempSelectedTeachers.contains(teacher['id']), // 임시 리스트로 체크 상태 관리
                       onChanged: (bool? value) {
                         setState(() {
                           if (value == true) {
-                            tempSelectedTeachers.add(teacher);  // 선택된 선생님 추가
+                            tempSelectedTeachers.add(teacher['id']);  // 선택된 선생님 추가
                           } else {
-                            tempSelectedTeachers.remove(teacher);  // 선택 해제된 선생님 제거
+                            tempSelectedTeachers.remove(teacher['id']);  // 선택 해제된 선생님 제거
                           }
                           
                           selectedTeachers = List.from(tempSelectedTeachers);  // 최종 선택된 선생님 리스트 반영
@@ -253,8 +254,57 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
     }
   }
 
+  Widget _buildDropdown({
+    required String? value,
+    required String hint,
+    required List<dynamic> items,
+    required Function(String?) onChanged,
+  }) {
+    return DropdownButtonHideUnderline(
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: DropdownButton<String>(
+          value: value,
+          hint: Text(hint, style: TextStyle(fontSize: 13)),
+          items: items.map((item) {
+            if (item is Map<String, dynamic>) {
+              return DropdownMenuItem<String>(
+                value: item['id'].toString(),
+                child: Text(
+                  item['name']?.toString() ?? '이름 없음',
+                  style: TextStyle(fontSize: 13),
+                ),
+              );
+            } else {
+              return DropdownMenuItem<String>(
+                value: item.toString(),
+                child: Text(item.toString(), style: TextStyle(fontSize: 13)),
+              );
+            }
+          }).toList(),
+          onChanged: onChanged,
+          style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(context).textTheme.bodyMedium?.color,
+          ),
+          icon: Icon(Icons.arrow_drop_down, size: 18),
+          isDense: true,
+          itemHeight: 40,
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool get wantKeepAlive => true;  // 상태 유지를 위한 오버라이드
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);  // AutomaticKeepAliveClientMixin 사용시 필수
     return Scaffold(
       appBar: AppBar(
         title: Text('학생 일정 관리'),
@@ -263,130 +313,163 @@ class _StudentScheduleScreenState extends State<StudentScheduleScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            Row(
-              children: [
-                DropdownButton<String>(
-                  value: selectedYear,
-                  hint: Text('년도'),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedYear = value;
-                      if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
-                        _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
-                      }
-                    });
-                  },
-                  items: years.map((year) {
-                    return DropdownMenuItem<String>(
-                      value: year,
-                      child: Text(year),
-                    );
-                  }).toList(),
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey.shade200),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    SizedBox(  // 년도 선택
+                      width: 80,  // 너비 축소
+                      child: _buildDropdown(
+                        value: selectedYear,
+                        hint: '년도',
+                        items: years,
+                        onChanged: (value) => setState(() {
+                          selectedYear = value;
+                          if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
+                            _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
+                          }
+                        }),
+                      ),
+                    ),
+                    SizedBox(width: 6),  // 간격 축소
+                    SizedBox(  // 월 선택
+                      width: 60,  // 너비 축소
+                      child: _buildDropdown(
+                        value: selectedMonth,
+                        hint: '월',
+                        items: months,
+                        onChanged: (value) => setState(() {
+                          selectedMonth = value;
+                          if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
+                            _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
+                          }
+                        }),
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(  // 학생 선택 - 더 넓은 공간 차지
+                      flex: 3,  // 더 많은 공간을 차지하도록 flex 값 추가
+                      child: _buildDropdown(
+                        value: selectedStudent,
+                        hint: '학생 선택',
+                        items: students,
+                        onChanged: (value) => setState(() {
+                          selectedStudent = value;
+                          if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
+                            _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
+                          }
+                        }),
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Container(  // 학생 추가 버튼
+                      width: 32,  // 최소 넓이 지정
+                      height: 32,
+                      child: OutlinedButton(
+                        onPressed: () => _showStudentDialog(context),
+                        child: Icon(Icons.person_add, size: 16),
+                        style: OutlinedButton.styleFrom(
+                          padding: EdgeInsets.zero,  // 패딩 제거
+                          side: BorderSide(color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Container(  // 선생님 선택 버튼
+                      width: 32,  // 최소 넓이 지정
+                      height: 32,
+                      child: TextButton(
+                        onPressed: () => _showTeacherDialog(context),
+                        child: Icon(Icons.school, size: 16),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,  // 패딩 제거
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(width: 10),
-                DropdownButton<String>(
-                  value: selectedMonth,
-                  hint: Text('월'),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedMonth = value;
-                      if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
-                        _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
-                      }
-                    });
-                  },
-                  items: months.map((month) {
-                    return DropdownMenuItem<String>(
-                      value: month,
-                      child: Text(month),
-                    );
-                  }).toList(),
-                ),
-                SizedBox(width: 10),
-                DropdownButton<String>(
-                  value: selectedStudent,
-                  hint: Text('학생 선택'),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedStudent = value;
-                      if (selectedYear != null && selectedMonth != null && selectedStudent != null) {
-                        _loadSchedule(selectedStudent!, '$selectedYear-$selectedMonth');
-                      }
-                    });
-                  },
-                  items: students.map((student) {
-                    return DropdownMenuItem<String>(
-                      value: student,
-                      child: Text(student),
-                    );
-                  }).toList(),
-                ),
-                IconButton(
-                  icon: Icon(Icons.add),
-                  onPressed: () => _showStudentDialog(context),
-                ),
-                IconButton(
-                  icon: Icon(Icons.person_add),
-                  onPressed: () => _showTeacherDialog(context), // 선생님 선택 버튼
-                ),
-              ],
+              ),
             ),
+            SizedBox(height: 16),
             Expanded(
-              child: GridView.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 8, // 7일 + 1시간 열 (가로 8칸)
-                  childAspectRatio: 2.0,
+              child: Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.shade200),
                 ),
-                itemCount: 112, // 7일 * 14시간 + 1시간 열
-                itemBuilder: (context, index) {
-                  int day = (index % 8) - 1; // 첫 번째 열(시간 표시 제외)로 요일을 구분
-                  int time = (index ~/ 8);    // 세로 14시간 (1시간 단위)
+                child: GridView.builder(
+                  padding: EdgeInsets.all(16),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 8,
+                    childAspectRatio: 1.8,  // 비율 조정으로 칸 크기 증가
+                    crossAxisSpacing: 1.5,   // 가로 간격 살짝 증가
+                    mainAxisSpacing: 1.5,    // 세로 간격 살짝 증가
+                  ),
+                  itemCount: 112,
+                  itemBuilder: (context, index) {
+                    int day = (index % 8) - 1;
+                    int time = (index ~/ 8);
 
-                  // 첫 번째 열 (시간 표시)
-                  if (index % 8 == 0) {
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black),
-                      ),
-                      child: Center(child: Text('${8 + time}:00')),
-                    );
-                  }
+                    if (index % 8 == 0) {
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade200),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${8 + time}:00',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      );
+                    }
 
-                  // 첫 번째 행 (요일 표시)
-                  if (index < 8) {
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black),
-                      ),
-                      child: Center(child: Text(['일', '월', '화', '수', '목', '금', '토'][index - 1])),
-                    );
-                  }
+                    if (index < 8) {
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade200),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Center(
+                          child: Text(
+                            ['일', '월', '화', '수', '목', '금', '토'][index - 1],
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      );
+                    }
 
-                  // 년월, 학생 선택이 되어 있지 않으면 클릭 불가
-                  if (selectedYear == null || selectedMonth == null || selectedStudent == null) {
+                    var currentSchedule = schedule[day][time];
                     return GestureDetector(
-                      onTap: null,  // 클릭 비활성화
+                      onTap: selectedYear == null || selectedMonth == null || selectedStudent == null
+                          ? null
+                          : () => _toggleCell(day, time),
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.black),
-                          color: Colors.grey[200],
+                          border: Border.all(color: Colors.grey.shade200),
+                          borderRadius: BorderRadius.circular(4),
+                          color: currentSchedule != null
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Colors.white,
                         ),
                       ),
                     );
-                  }
-
-                  // 시간표 색칠 기능 (선택된 시간은 색상이 변함)
-                  var currentSchedule = schedule[day][time];
-                  return GestureDetector(
-                    onTap: () => _toggleCell(day, time),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black),
-                        color: currentSchedule != null ? Colors.blue[200] : Colors.white,
-                      )
-                    ),
-                  );
-                },
+                  },
+                ),
               ),
             ),
           ],

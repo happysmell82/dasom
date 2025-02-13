@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:flutter/rendering.dart';
 
 class TeacherScheduleScreen extends StatefulWidget {
   const TeacherScheduleScreen({super.key});
@@ -9,14 +10,14 @@ class TeacherScheduleScreen extends StatefulWidget {
   _TeacherScheduleScreenState createState() => _TeacherScheduleScreenState();
 }
 
-class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
+class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> with AutomaticKeepAliveClientMixin {
   String? selectedYear;
   String? selectedMonth;
   String? selectedTeacher;
 
   List<String> years = ['2025', '2026', '2027'];
   List<String> months = ['01', '02', '03', '04'];
-  List<String> teachers = []; // 서버에서 가져오는 선생님 목록
+  List<Map<String, dynamic>> teachers = []; // 서버에서 가져오는 선생님 목록
   Map<String, Map<String, List<String>>> schedules = {}; // 선생님별 시간표 (년-월 -> {요일: 시간대})
 
   List<List<Map<String, dynamic>?>> schedule = List.generate(7, (index) => List.generate(14, (index) => null));
@@ -30,6 +31,9 @@ class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
     _loadTeachers(); // 화면이 열리면 선생님 목록을 불러옴
   }
 
+  @override
+  bool get wantKeepAlive => true;  // 상태 유지를 위한 오버라이드
+
   // 선생님 목록을 서버에서 불러오는 함수
   Future<void> _loadTeachers() async {
     var response = await http.get(Uri.parse('http://101.101.160.223:5000/teachers'));
@@ -37,7 +41,7 @@ class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
     if (response.statusCode == 200) {
       setState(() {
         var data = json.decode(response.body);
-        teachers = List<String>.from(data.map((teacher) => teacher['name'])); // 서버에서 받은 선생님 목록을 리스트로 저장
+        teachers = List<Map<String, dynamic>>.from(data); // 서버에서 받은 선생님 목록을 리스트로 저장
       });
     } else {
       print('Failed to load teachers');
@@ -179,6 +183,7 @@ class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);  // AutomaticKeepAliveClientMixin 사용시 필수
     return Scaffold(
       appBar: AppBar(
         title: Text('선생님 일정 관리'),
@@ -187,131 +192,195 @@ class _TeacherScheduleScreenState extends State<TeacherScheduleScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            Row(
-              children: [
-                DropdownButton<String>(
-                  value: selectedYear,
-                  hint: Text('년도'),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedYear = value;
-                      if (selectedYear != null && selectedMonth != null && selectedTeacher != null) {
-                        _loadSchedule(selectedTeacher!, '$selectedYear-$selectedMonth');
-                      }
-                    });
-                  },
-                  items: years.map((year) {
-                    return DropdownMenuItem<String>(
-                      value: year,
-                      child: Text(year),
-                    );
-                  }).toList(),
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey.shade200),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    SizedBox(  // 년도 선택
+                      width: 80,
+                      height: 32,  // 높이 고정
+                      child: _buildDropdown(
+                        value: selectedYear,
+                        hint: '년도',
+                        items: years,
+                        onChanged: (value) => setState(() {
+                          selectedYear = value;
+                          if (selectedYear != null && selectedMonth != null && selectedTeacher != null) {
+                            _loadSchedule(selectedTeacher!, '$selectedYear-$selectedMonth');
+                          }
+                        }),
+                      ),
+                    ),
+                    SizedBox(width: 6),
+                    SizedBox(  // 월 선택
+                      width: 60,
+                      height: 32,  // 높이 고정
+                      child: _buildDropdown(
+                        value: selectedMonth,
+                        hint: '월',
+                        items: months,
+                        onChanged: (value) => setState(() {
+                          selectedMonth = value;
+                          if (selectedYear != null && selectedMonth != null && selectedTeacher != null) {
+                            _loadSchedule(selectedTeacher!, '$selectedYear-$selectedMonth');
+                          }
+                        }),
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(  // 선생님 선택
+                      child: SizedBox(
+                        height: 32,  // 높이 고정
+                        child: _buildDropdown(
+                          value: selectedTeacher,
+                          hint: '선생님 선택',
+                          items: teachers,
+                          onChanged: (value) => setState(() {
+                            selectedTeacher = value;
+                            if (selectedYear != null && selectedMonth != null && selectedTeacher != null) {
+                              _loadSchedule(selectedTeacher!, '$selectedYear-$selectedMonth');
+                            }
+                          }),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    SizedBox(
+                      height: 32,  // 높이 고정
+                      child: IconButton(
+                        icon: Icon(Icons.person_add_outlined, size: 20),
+                        onPressed: () => _showTeacherDialog(context),
+                        style: IconButton.styleFrom(
+                          padding: EdgeInsets.all(8),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(width: 10),
-                DropdownButton<String>(
-                  value: selectedMonth,
-                  hint: Text('월'),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedMonth = value;
-                      if (selectedYear != null && selectedMonth != null && selectedTeacher != null) {
-                        _loadSchedule(selectedTeacher!, '$selectedYear-$selectedMonth');
-                      }
-                    });
-                  },
-                  items: months.map((month) {
-                    return DropdownMenuItem<String>(
-                      value: month,
-                      child: Text(month),
-                    );
-                  }).toList(),
-                ),
-                SizedBox(width: 10),
-                DropdownButton<String>(
-                  value: selectedTeacher,
-                  hint: Text('선생님 선택'),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedTeacher = value;
-                      if (selectedYear != null && selectedMonth != null && selectedTeacher != null) {
-                        _loadSchedule(selectedTeacher!, '$selectedYear-$selectedMonth');
-                      }
-                    });
-                  },
-                  items: teachers.map((teacher) {
-                    return DropdownMenuItem<String>(
-                      value: teacher,
-                      child: Text(teacher),
-                    );
-                  }).toList(),
-                ),
-                IconButton(
-                  icon: Icon(Icons.add),
-                  onPressed: () => _showTeacherDialog(context),
-                ),
-              ],
+              ),
             ),
+            SizedBox(height: 16),
             Expanded(
-              child: GridView.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 8, // 7일 + 1시간 열 (가로 8칸)
-                  childAspectRatio: 2.0,
+              child: Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.shade200),
                 ),
-                itemCount: 112, // 7일 * 14시간 + 1시간 열
-                itemBuilder: (context, index) {
-                  int day = (index % 8) - 1; // 첫 번째 열(시간 표시 제외)로 요일을 구분
-                  int time = (index ~/ 8);    // 세로 14시간 (1시간 단위)
+                child: GridView.builder(
+                  padding: EdgeInsets.all(16),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 8,
+                    childAspectRatio: 1.8,  // 비율 조정으로 칸 크기 증가
+                    crossAxisSpacing: 1.5,   // 가로 간격 살짝 증가
+                    mainAxisSpacing: 1.5,    // 세로 간격 살짝 증가
+                  ),
+                  itemCount: 112,
+                  itemBuilder: (context, index) {
+                    int day = (index % 8) - 1;
+                    int time = (index ~/ 8);
 
-                  // 첫 번째 열 (시간 표시)
-                  if (index % 8 == 0) {
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black),
-                      ),
-                      child: Center(child: Text('${8 + time}:00')),
-                    );
-                  }
+                    if (index % 8 == 0) {
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade200),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${8 + time}:00',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      );
+                    }
 
-                  // 첫 번째 행 (요일 표시)
-                  if (index < 8) {
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black),
-                      ),
-                      child: Center(child: Text(['일', '월', '화', '수', '목', '금', '토'][index - 1])),
-                    );
-                  }
+                    if (index < 8) {
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade200),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Center(
+                          child: Text(
+                            ['일', '월', '화', '수', '목', '금', '토'][index - 1],
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      );
+                    }
 
-                  // 년월, 선생님 선택이 되어 있지 않으면 클릭 불가
-                  if (selectedYear == null || selectedMonth == null || selectedTeacher == null) {
+                    var currentSchedule = schedule[day][time];
                     return GestureDetector(
-                      onTap: null,  // 클릭 비활성화
+                      onTap: selectedYear == null || selectedMonth == null || selectedTeacher == null
+                          ? null
+                          : () => _toggleCell(day, time),
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.black),
-                          color: Colors.grey[200],
+                          border: Border.all(color: Colors.grey.shade200),
+                          borderRadius: BorderRadius.circular(4),
+                          color: currentSchedule != null
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Colors.white,
                         ),
                       ),
                     );
-                  }
-
-                  // 시간표 색칠 기능 (선택된 시간은 색상이 변함)
-                  var currentSchedule = schedule[day][time];
-                  return GestureDetector(
-                    onTap: () {
-                      _toggleCell(day, time);
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black),
-                        color: currentSchedule == null ? Colors.white : Colors.green[200],
-                      ),
-                    ),
-                  );
-                },
+                  },
+                ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDropdown({
+    required String? value,
+    required String hint,
+    required List<dynamic> items,
+    required Function(String?) onChanged,
+  }) {
+    return DropdownButtonHideUnderline(
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: DropdownButton<String>(
+          value: value,
+          hint: Text(hint, style: TextStyle(fontSize: 13)),
+          items: items.map((item) {
+            if (item is Map<String, dynamic>) {
+              return DropdownMenuItem<String>(
+                value: item['id'].toString(),
+                child: Text(
+                  item['name']?.toString() ?? '이름 없음',
+                  style: TextStyle(fontSize: 13),
+                ),
+              );
+            } else {
+              return DropdownMenuItem<String>(
+                value: item.toString(),
+                child: Text(item.toString(), style: TextStyle(fontSize: 13)),
+              );
+            }
+          }).toList(),
+          onChanged: onChanged,
+          style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(context).textTheme.bodyMedium?.color,
+          ),
+          icon: Icon(Icons.arrow_drop_down, size: 18),
+          isDense: true,
+          itemHeight: 40,
         ),
       ),
     );

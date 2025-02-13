@@ -3,6 +3,7 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime
+from calendar import monthrange
 
 # Firebase Admin SDK 인증
 cred = credentials.Certificate("dasom-771e7-firebase-adminsdk-fbsvc-6dfc067219.json")
@@ -21,8 +22,11 @@ def get_teachers():
 
     teacher_list = []
     for teacher in teachers:
-        teacher_list.append(teacher.to_dict())
-
+        teacher_data = teacher.to_dict()
+        teacher_data['id'] = teacher.id  # 문서 ID 추가
+        teacher_list.append(teacher_data)
+    
+    print(teacher_list)
     return jsonify(teacher_list)
 
 # 선생님 등록 API (선생님의 이름을 받아서 등록)
@@ -42,9 +46,12 @@ def add_teacher():
     existing_teacher = teachers_ref.where('name', '==', teacher_name).stream()
     if any(existing_teacher):
         return jsonify({"message": "이미 등록된 선생님입니다."}), 400
-
+    
+    docs = teachers_ref.get()
+    count = len(docs)
+    
     # 선생님 등록
-    teachers_ref.document(teacher_name).set({
+    teachers_ref.document(f"teacher_{count+1:03d}").set({
         'name': teacher_name,
         'created_at': datetime.now()
     })
@@ -53,7 +60,7 @@ def add_teacher():
 
 # 선생님의 시간표 조회 API (선생님과 년월을 쿼리로 받아옴)
 @app.route('/teacher_schedules', methods=['GET'])
-def get_schedule():
+def get_teacher_schedules():
     teacher = request.args.get('teacher')
     year_month = request.args.get('year_month')
 
@@ -61,7 +68,7 @@ def get_schedule():
         return jsonify({"message": "선생님과 년월을 입력해 주세요."}), 400
 
     # 해당 선생님의 시간표를 가져옵니다
-    schedule_ref = db.collection('teacher_schedules').document(teacher).collection(year_month)
+    schedule_ref = db.collection('teacher_schedules').document(teacher).collection('schedules').document(year_month).collection('schedule')
     schedule = schedule_ref.stream()
 
     schedule_data = []
@@ -72,7 +79,7 @@ def get_schedule():
 
 # 선생님의 시간표 저장 API
 @app.route('/teacher_schedules', methods=['POST'])
-def save_schedule():
+def save_teacher_schedule():
     data = request.get_json()
 
     teacher = data.get('teacher')
@@ -83,18 +90,17 @@ def save_schedule():
         return jsonify({"message": "선생님, 년월, 시간표 데이터를 모두 입력해 주세요."}), 400
     
     # 해당 선생님의 시간표를 저장합니다
-    schedule_ref = db.collection('teacher_schedules').document(teacher).collection(year_month)
+    schedule_ref = db.collection('teacher_schedules').document(teacher).collection('schedules').document(year_month).collection('schedule')
     
     # 기존 데이터 삭제 후 새로운 데이터 저장
-    schedules = schedule_ref.stream()
-    
-    for data in schedules:
-        data.reference.delete()
+    docs = schedule_ref.stream()
+    for doc in docs:
+        doc.reference.delete()
 
     for entry in schedule:
         day = entry.get('day')
         time = entry.get('time')
-        day_time = day+time
+        day_time = f"{day}_{time}"  # 구분자 추가
         schedule_ref.document(day_time).set(entry)
 
     return jsonify({"message": "시간표가 저장되었습니다."}), 200
@@ -107,7 +113,9 @@ def get_students():
 
     student_list = []
     for student in students:
-        student_list.append(student.to_dict())
+        student_data = student.to_dict()
+        student_data['id'] = student.id  # 문서 ID 추가
+        student_list.append(student_data)
 
     return jsonify(student_list)
 
@@ -129,8 +137,11 @@ def add_student():
     if any(existing_student):
         return jsonify({"message": "이미 등록된 학생입니다."}), 400
 
+    docs = students_ref.get()
+    count = len(docs)
+
     # 학생 등록
-    students_ref.document(student_name).set({
+    students_ref.document(f"student_{count+1:03d}").set({
         'name': student_name,
         'created_at': datetime.now()
     })
@@ -147,22 +158,23 @@ def get_student_schedule():
         return jsonify({"message": "학생과 년월을 입력해 주세요."}), 400
 
     # 해당 학생의 시간표를 가져옵니다
-    schedule_ref = db.collection('student_schedules').document(student).collection("year_month").document(year_month)
+    schedule_ref = db.collection('student_schedules').document(student).collection("schedules").document(year_month)
     schedule_doc = schedule_ref.get()
 
-    if not schedule_doc.exists:
-        return jsonify({"message": "해당 문서가 존재하지 않습니다."}), 404
+    # 기본 데이터 구조 설정
+    schedule_data = {
+        'teachers': [],
+        'schedule': []
+    }
 
-    # 문서의 필드 정보 가져오기
-    schedule_data = schedule_doc.to_dict() or {}
+    # 문서가 존재하는 경우 teachers 데이터 가져오기
+    if schedule_doc.exists:
+        schedule_data['teachers'] = (schedule_doc.to_dict())['teachers'] or []
 
-    # 하위 컬렉션 가져오기 (예: lessons, timeslots 등 여러 개일 수 있음)
-    sub_collections = schedule_ref.collections()
-    
-    for sub_col in sub_collections:
-        sub_docs = sub_col.stream()
-        schedule_data[sub_col.id] = [doc.to_dict() for doc in sub_docs]  # 컬렉션 데이터를 리스트로 변환
-
+    # schedule 하위 컬렉션 데이터 가져오기
+    schedule_collection = schedule_ref.collection('schedule').stream()
+    schedule_data['schedule'] = [doc.to_dict() for doc in schedule_collection]
+    print(schedule_data)
     return Response(json.dumps(schedule_data, ensure_ascii=False), mimetype='application/json; charset=utf-8')
 
 # 학생의 시간표 저장 API
@@ -179,7 +191,7 @@ def save_student_schedule():
         return jsonify({"message": "학생, 년월, 시간표 데이터를 모두 입력해 주세요."}), 400
     
     # 해당 학생의 시간표를 저장합니다
-    schedule_ref = db.collection('student_schedules').document(student).collection('year_month').document(year_month)
+    schedule_ref = db.collection('student_schedules').document(student).collection('schedules').document(year_month)
     
     # 기존 데이터 삭제 후 새로운 데이터 저장
     subcollections = ["teachers","schedule"]
@@ -224,7 +236,7 @@ def generate_schedule():
         
         teacher_schedules = {}
         for teacher in teachers:
-            schedule_ref = db.collection('teacher_schedules').document(teacher.id).collection(year_month)
+            schedule_ref = db.collection('teacher_schedules').document(teacher.id).collection('schedules').document(year_month).collection('schedule')
             schedules = schedule_ref.stream()
             teacher_schedules[teacher.id] = [s.to_dict() for s in schedules]
 
@@ -236,7 +248,7 @@ def generate_schedule():
         
         student_schedules = {}
         for student in students:
-            schedule_ref = db.collection('student_schedules').document(student.id).collection('year_month').document(year_month)
+            schedule_ref = db.collection('student_schedules').document(student.id).collection('schedules').document(year_month)
             schedule_doc = schedule_ref.get()
             if schedule_doc.exists:
                 schedule_data = schedule_doc.to_dict() or {}
@@ -352,10 +364,11 @@ def generate_schedule():
         for teacher_id, teacher_data in teacher_matches.items():
             for ym, year_month_data in teacher_data.items():
                 for student_id, student_data in year_month_data.items():
-                    # 경로: teachers/{teacher_id}/{year_month}/{student_id}
                     doc_ref = db.collection('matched_schedules')\
                               .document(teacher_id)\
-                              .collection(year_month)\
+                              .collection('schedules')\
+                              .document(year_month)\
+                              .collection('schedule')\
                               .document(student_id)
                     
                     # 일자별 데이터 저장
@@ -376,25 +389,29 @@ def get_matched_schedules():
         return jsonify({"message": "선생님과 년월을 입력해 주세요."}), 400
 
     try:
-        matched_ref = db.collection('matched_schedules').document(teacher_name).collection(year_month)
+        matched_ref = db.collection('matched_schedules').document(teacher_name).collection('schedules').document(year_month).collection('schedule')
         schedules = []
-        
-        year, month = map(int, year_month.split('-'))
         
         for student_doc in matched_ref.stream():
             student_data = student_doc.to_dict()
             student_id = student_doc.id
             
+            # 학생 이름 조회
+            student_ref = db.collection('students').document(student_id)
+            student_info = student_ref.get()
+            student_name = student_info.to_dict()['name'] if student_info.exists else student_id
+            
             # 각 일자별 데이터 처리
-            for day, day_data in student_data.items():
-                date_str = f"{year}-{month:02d}-{int(day):02d}T00:00:00Z"
+            for date, date_data in student_data.items():
                 schedules.append({
-                    'student': student_id,
-                    'day': day_data['day_of_week'],
-                    'time': date_str
+                    'student': student_name,  # ID 대신 이름 사용
+                    'day': date_data['day_of_week'],
+                    'time': date_data['time'],
+                    'date': date
                 })
-
+        print(schedules)    
         return jsonify(schedules)
+
 
     except Exception as e:
         print(f"Error fetching schedules: {str(e)}")
